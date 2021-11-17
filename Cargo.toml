@@ -1,0 +1,23 @@
+[package]
+name = "wfst4str"
+version = "0.1.0"
+edition = "2018"
+
+[lib]
+name = "wfst4str"
+crate-type = ["cdylib"]
+
+[package.metadata.maturin]
+classifier = [
+  "Programming Language :: Rust",
+  "Operating System :: POSIX :: Linux",
+]
+
+[dependencies]
+
+[dependencies.rustfst]
+version = "0.9.0"
+
+[dependencies.pyo3]
+version = "0.15.0"
+features = ["extension-module"]
