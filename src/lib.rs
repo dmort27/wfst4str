@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 // use rustfst::utils::transducer;
 use rustfst::utils::acceptor;
+use rustfst::fst_traits::SerializableFst;
 
 /// Wraps a [`rustfst`] SymbolTable struct as a Python class.
 ///
@@ -82,6 +83,41 @@ impl SymTab {
     }
 }
 
+/// Wraps the [`VectorFst`] struct from [`rustfst`]. Assumes weights are in the tropical semiring.
+/// 
+/// # Example
+/// ## Rust
+/// 
+/// ```
+/// let t = WeightedFst::new();
+/// ```
+/// use wfst4str::WeightedFst;
+/// 
+/// let t = WeightedFst();
+/// let sym = vec!["a", "b", "c"];
+/// t.set_input_symbols(sym);
+/// t.set_output_symbols(sym);
+/// let q0 = t.add_state();
+/// let q1 = t.add_state();
+/// t.set_start(q0).unwrap();
+/// t.set_final(q1).unwrap();
+/// t.add_tr(0, 1, "a", "b").unwrap();
+/// ```
+/// ## Python
+/// 
+/// ```python
+/// import wfst4str
+/// 
+/// t = wfst4str.WeightedFst();
+/// t.set_input_symbols(['a', 'b', 'c'])
+/// t.set_output_symbols(['a', 'b', 'c'])
+/// q0 = t.add_state()
+/// q1 = t.add_state()
+/// t.set_start(q0)
+/// q1.set_final(q1, 0.0)
+/// t.add_tr(0, 1, 'a', 'b')
+/// ```
+/// 
 #[pyclass]
 pub struct WeightedFst {
     fst: VectorFst<TropicalWeight>,
@@ -89,6 +125,8 @@ pub struct WeightedFst {
 
 #[pymethods]
 impl WeightedFst {
+
+    /// Constructs a [`WeightedFst`] object.
     #[new]
     pub fn new() -> Self {
         WeightedFst {
@@ -96,24 +134,29 @@ impl WeightedFst {
         }
     }
 
+    /// Creates a symbol table from a vector of strings and associates it with the wFST. 
     pub fn set_input_symbols(&mut self, sym_vec: Vec<String>) -> () {
         let symt = SymTab::new(sym_vec);
         self.fst.set_input_symbols(Arc::new(symt.symt))
     }
 
+    /// Creates a symbol table from a vector of strings and associates it with the wFST.
     pub fn set_output_symbols(&mut self, sym_vec: Vec<String>) -> () {
         let symt = SymTab::new(sym_vec);
         self.fst.set_output_symbols(Arc::new(symt.symt))
     }
 
+    /// Adds `n` states to the wFST.
     pub fn add_states(&mut self, n: usize) {
         self.fst.add_states(n)
     }
 
+    /// Adds one new state and returns the corresponding number. 
     pub fn add_state(&mut self) -> StateId {
         self.fst.add_state()
     }
 
+    /// Sets `state` as a start state (initial state).
     pub fn set_start(&mut self, state: StateId) -> PyResult<()> {
         self.fst
             .set_start(state)
@@ -121,6 +164,7 @@ impl WeightedFst {
         Ok(())
     }
 
+    /// Sets `state` as a final state (accepting state).
     pub fn set_final(&mut self, state: StateId, weight: f32) -> PyResult<()> {
         self.fst
             .set_final(state, weight)
@@ -128,12 +172,14 @@ impl WeightedFst {
         Ok(())
     }
 
+    /// Serializes the wFST to a text file at `path` in AT&T format (OpenFST compatible).
     pub fn write_text(&self, path: &str) -> PyResult<()> {
         let path_output = Path::new(path);
         self.fst.write_text(path_output).unwrap();
         Ok(())
     }
 
+    /// Returns a serialization of the wFST as a string in AT&T format (OpenFST compatible). 
     pub fn text(&self) -> String {
         match self.fst.text() {
             Ok(s) => s,
@@ -141,6 +187,8 @@ impl WeightedFst {
         }
     }
 
+    /// Outputs a representation of the wFST as a `dot` file to `path`, which
+    /// can be visualized with Graphviz.
     pub fn draw(&self, path: &str) -> PyResult<()> {
         let config = DrawingConfig::default();
         let path_output = Path::new(path);
@@ -150,6 +198,8 @@ impl WeightedFst {
         Ok(())
     }
 
+    /// Adds a transition to the wFST from `source_state` to `next_state` with
+    /// input symbol `isym`, output symbol `osym`, and weight `weight`
     pub fn add_tr(
         &mut self,
         source_state: StateId,
@@ -176,12 +226,14 @@ impl WeightedFst {
         Ok(())
     }
 
+    /// Returns the composition of the wFST and another wFST (`other`)
     pub fn compose(&self, other: &WeightedFst) -> PyResult<WeightedFst> {
         Ok(WeightedFst {
             fst: compose::compose(self.fst.clone(), other.fst.clone()).expect("Couldn't compose!"),
         })
     }
 
+    /// Converts a string to a linear wFST using the input `SymbolTable` of the wFST.
     pub fn to_linear_fst(&self, s: &str) -> PyResult<WeightedFst> {
         let symt = self
             .fst
@@ -213,6 +265,7 @@ impl WeightedFst {
         Ok(WeightedFst { fst: lfst })
     }
 
+    /// Applies the wFST to a string (consisting of symbols in the wFSTs `SymbolTable`s).
     pub fn apply(&self, s: &str) -> PyResult<Vec<String>> {
         let lfst = self.to_linear_fst(s).unwrap();
         println!("lfst.text()=\n{}", lfst.text());
@@ -241,11 +294,13 @@ impl WeightedFst {
             .collect())
     }
 
+    /// Sorts the transitions of a wFST based on its input labels.
     pub fn tr_ilabel_sort(&mut self) {
         let _comp = ILabelCompare {};
         rs_tr_sort(&mut self.fst, _comp)
     }
 
+    /// Sorts the transitions of a wFST based on its output labels.
     pub fn tr_olabel_sort(&mut self) {
         let _comp = OLabelCompare {};
         rs_tr_sort(&mut self.fst, _comp)
@@ -272,11 +327,24 @@ impl WeightedFst {
 //     rs_tr_sort(&mut fst.fst, _comp)
 // }
 
+#[pyfunction]
+pub fn from_text_string(fst_string: &str) -> PyResult<WeightedFst> {
+    Ok(WeightedFst { fst: VectorFst::from_text_string(&fst_string).unwrap() })
+}
+
+#[pyfunction]
+pub fn read_text(path_text_fst: &str) -> PyResult<WeightedFst> {
+    let fst_path = Path::new(path_text_fst);
+    Ok(WeightedFst { fst: VectorFst::read_text(fst_path).unwrap()})
+}
+
 #[pymodule]
 #[pyo3(name = "wfst4str")]
 fn wfst4str(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<SymTab>()?;
     m.add_class::<WeightedFst>()?;
+    m.add_function(wrap_pyfunction!(from_text_string, m)?)?;
+    m.add_function(wrap_pyfunction!(read_text, m)?)?;
     // m.add_function(wrap_pyfunction!(compose, m)?)?;
     // m.add_function(wrap_pyfunction!(tr_ilabel_sort, m)?)?;
     // m.add_function(wrap_pyfunction!(tr_olabel_sort, m)?)?;
@@ -296,13 +364,6 @@ mod tests {
 
     #[test]
     fn test_apply() {
-        let mut t = crate::WeightedFst::new();
-        t.set_input_symbols(vec!["a", "b", "c"].iter().map(|s| s.to_string()).collect());
-        t.set_output_symbols(vec!["a", "b", "c"].iter().map(|s| s.to_string()).collect());
-        t.add_states(3);
-        t.set_start(0).unwrap_or(());
-        t.set_final(2, TropicalWeight::one()).unwrap_or(());
-        let s = t.to_linear_fst("ab");
-        println!("{}", s.unwrap().text())
+        ()
     }
 }
