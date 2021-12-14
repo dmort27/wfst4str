@@ -1,3 +1,13 @@
+use nom::{
+    branch::alt,
+    character::complete::{digit1, line_ending, none_of, space1},
+    combinator::{recognize, success},
+    // error::ErrorKind,
+    multi::{many1, separated_list0},
+    number::complete::float,
+    sequence::tuple,
+    IResult,
+};
 use pyo3::prelude::*;
 use rustfst::algorithms::compose;
 use rustfst::algorithms::tr_sort as rs_tr_sort;
@@ -8,6 +18,7 @@ use rustfst::prelude::*;
 use rustfst::utils::acceptor;
 use std::path::Path;
 use std::sync::Arc;
+// use nom::{Err, error::ErrorKind};
 
 /// Wraps a [`rustfst`] SymbolTable struct as a Python class.
 ///
@@ -419,6 +430,37 @@ impl WeightedFst {
         shortest.fst.set_symts_from_fst(&self.fst);
         shortest.paths_as_strings()
     }
+
+    /// Populates a [`WeightedFST`] based on an AT&T description
+    pub fn populate_from_att(&mut self, text: &str) -> PyResult<()> {
+        if let Ok((_, exprs)) = att_file(text) {
+            for expr in exprs {
+                match expr {
+                    AttExpr::AttTr(tr_expr) => {
+                        let isymt = self.fst.input_symbols().unwrap_or_else(|| panic!("No input symbol table!"));
+                        let osymt = self.fst.output_symbols().unwrap_or_else(|| panic!("No output symbol table!"));
+                        let ilabel = isymt.get_label(tr_expr.isymbol).unwrap();
+                        let olabel = osymt.get_label(tr_expr.osymbol).unwrap();
+                        let tr = Tr::<TropicalWeight>::new(
+                            ilabel,
+                            olabel,
+                            tr_expr.weight,
+                            tr_expr.nextstate,
+                        );
+                        self.fst.add_tr(tr_expr.sourcestate, tr).unwrap_or({
+                            println!("Could not create transition from {:?} to {:?}."， tr_expr.sourcestate, tr_expr.nextstate);
+                            ()
+                        });
+                    }
+                    AttExpr::AttFinal(fs_expr) => {
+                        self.fst.set_final(fs_expr.state, fs_expr.finalweight).unwrap_or_else(|e| panic!("No such state: {:?} {:?}", fs_expr.state, e));
+                    }
+                    AttExpr::AttNone => (),
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 // #[pyfunction]
@@ -456,6 +498,104 @@ pub fn wfst_from_text_file(path_text_fst: &str) -> PyResult<WeightedFst> {
     })
 }
 
+#[derive(Debug, PartialEq)]
+pub struct AttTransition {
+    sourcestate: StateId,
+    nextstate: StateId,
+    isymbol: String,
+    osymbol: String,
+    weight: f32,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct AttFinalState {
+    state: StateId,
+    finalweight: f32,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum AttExpr {
+    AttTr(AttTransition),
+    AttFinal(AttFinalState),
+    AttNone,
+}
+
+pub fn att_final_state(input: &str) -> IResult<&str, AttExpr> {
+    let mut parser = tuple((recognize(digit1), space1, float));
+    let (input, (s, _, w)) = parser(input)?;
+    Ok((
+        input,
+        AttExpr::AttFinal(AttFinalState {
+            state: s.parse().unwrap_or(0),
+            finalweight: w,
+        }),
+    ))
+}
+
+pub fn att_transition(input: &str) -> IResult<&str, AttExpr> {
+    let mut parser = tuple((
+        recognize(digit1),
+        space1,
+        recognize(digit1),
+        space1,
+        many1(none_of(" \t")),
+        space1,
+        many1(none_of(" \t")),
+        space1,
+        float,
+    ));
+    let (input, (s, _, n, _, i, _, o, _, w)) = parser(input)?;
+    Ok((
+        input,
+        AttExpr::AttTr(AttTransition {
+            sourcestate: s.parse().unwrap(),
+            nextstate: n.parse().unwrap(),
+            isymbol: i.into_iter().collect(),
+            osymbol: o.into_iter().collect(),
+            weight: w,
+        }),
+    ))
+}
+
+pub fn att_none(input: &str) -> IResult<&str, AttExpr> {
+    let (input, _) = success("")(input)?;
+    Ok((input, AttExpr::AttNone))
+}
+
+pub fn att_row(input: &str) -> IResult<&str, AttExpr> {
+    let mut parser = alt((att_transition, att_final_state, att_none));
+    let (input, row) = parser(input)?;
+    Ok((input, row))
+}
+
+pub fn att_file(input: &str) -> IResult<&str, Vec<AttExpr>> {
+    let mut parser = separated_list0(line_ending, att_row);
+    let (input, rows) = parser(input)?;
+    Ok((input, rows))
+}
+
+pub fn att_num_states(text: &str) -> usize {
+    match att_file(text) {
+        Ok((_, rows)) => {
+            let mut max_state = 0;
+            for row in rows {
+                match row {
+                    AttExpr::AttTr(tr) => {
+                        max_state = max_state.max(tr.sourcestate);
+                        max_state = max_state.max(tr.nextstate);
+                    }
+                    AttExpr::AttFinal(f) => {
+                        max_state = max_state.max(f.state);
+                    }
+                    AttExpr::AttNone => (),
+                }
+            }
+            max_state
+        }
+        _ => panic!("Cannot parse string as AT&T wFST."),
+    }
+}
+
 #[pymodule]
 #[pyo3(name = "wfst4str")]
 fn wfst4str(_py: Python, m: &PyModule) -> PyResult<()> {
@@ -467,21 +607,4 @@ fn wfst4str(_py: Python, m: &PyModule) -> PyResult<()> {
     // m.add_function(wrap_pyfunction!(tr_ilabel_sort, m)?)?;
     // m.add_function(wrap_pyfunction!(tr_olabel_sort, m)?)?;
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn test_get_symbol() {
-        let st = crate::SymTab::new(vec!["a".to_string(), "b".to_string(), "c".to_string()]);
-        assert_eq!(st.get_symbol(1).unwrap_or(""), "a");
-        assert_eq!(st.get_symbol(2).unwrap_or(""), "b");
-        return ();
-    }
-
-    #[test]
-    fn test_apply() {
-        ()
-    }
 }
