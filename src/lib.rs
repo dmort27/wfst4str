@@ -662,7 +662,6 @@ pub fn att_num_states(text: &str) -> usize {
 }
 
 #[pymodule]
-#[pyo3(name = "wfst4str")]
 fn wfst4str(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<SymTab>()?;
     m.add_class::<WeightedFst>()?;
