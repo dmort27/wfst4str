@@ -53,7 +53,7 @@ impl SymTab {
         for s in sigma {
             symt.add_symbol(s);
         }
-        SymTab { symt: symt }
+        SymTab { symt }
     }
 
     /// Adds a symbol to a [`SymTab`] with an associated label
@@ -134,6 +134,12 @@ pub struct WeightedFst {
     fst: VectorFst<TropicalWeight>,
 }
 
+impl Default for WeightedFst {
+    fn default() -> Self {
+        WeightedFst::new()
+    }
+}
+
 #[pymethods]
 impl WeightedFst {
     /// Constructs a [`WeightedFst`] object.
@@ -145,13 +151,13 @@ impl WeightedFst {
     }
 
     /// Creates a symbol table from a vector of strings and associates it with the wFST.
-    pub fn set_input_symbols(&mut self, sym_vec: Vec<String>) -> () {
+    pub fn set_input_symbols(&mut self, sym_vec: Vec<String>) {
         let symt = SymTab::new(sym_vec);
         self.fst.set_input_symbols(Arc::new(symt.symt))
     }
 
     /// Creates a symbol table from a vector of strings and associates it with the wFST.
-    pub fn set_output_symbols(&mut self, sym_vec: Vec<String>) -> () {
+    pub fn set_output_symbols(&mut self, sym_vec: Vec<String>) {
         let symt = SymTab::new(sym_vec);
         self.fst.set_output_symbols(Arc::new(symt.symt))
     }
@@ -276,12 +282,9 @@ impl WeightedFst {
         for c in s.chars() {
             acc.push(c);
             if !symt.contains_symbol(&acc) {
-                match acc.pop() {
-                    Some(n) => {
-                        syms.push(acc);
-                        acc = n.to_string();
-                    }
-                    None => (),
+                if let Some(n) = acc.pop() {
+                    syms.push(acc);
+                    acc = n.to_string();
                 }
             }
         }
@@ -344,7 +347,7 @@ impl WeightedFst {
             _ => panic!("wFST lacks a start state. Aborting."),
         }
         let mut visited = vec![false; self.fst.num_states()];
-        while stack.len() > 0 {
+        while !stack.is_empty() {
             let s = stack.pop().unwrap();
             for tr in fst2.get_trs(s).unwrap().iter() {
                 if visited[tr.nextstate] {
@@ -382,7 +385,7 @@ impl WeightedFst {
             let out_labs: Vec<Label> = normal.iter().map(|tr| tr.ilabel).collect();
             let complement: Vec<usize> = norm_labs
                 .iter()
-                .map(|&x| x)
+                .copied()
                 .filter(|x| !out_labs.contains(x))
                 .collect();
             for tr in normal.iter() {
@@ -461,9 +464,9 @@ impl WeightedFst {
                             println!(
                                 "Could not create transition from {:?} to {:?}.",
                                 tr_expr.sourcestate, tr_expr.nextstate
-                            );
-                            ()
+                            )
                         });
+                        ()
                     }
                     AttExpr::AttFinal(fs_expr) => {
                         self.fst
@@ -503,7 +506,7 @@ impl WeightedFst {
 #[pyfunction]
 pub fn wfst_from_text_string(fst_string: &str) -> PyResult<WeightedFst> {
     Ok(WeightedFst {
-        fst: VectorFst::from_text_string(&fst_string).unwrap(),
+        fst: VectorFst::from_text_string(fst_string).unwrap(),
     })
 }
 
@@ -561,15 +564,15 @@ pub fn att_transition(input: &str) -> IResult<&str, AttExpr> {
         space1,
         float,
     ));
-    let (input, (s, _, n, _, i, _, o, _, w)) = parser(input)?;
+    let (input, (src, _, nxt, _, isym, _, osym, _, weight)) = parser(input)?;
     Ok((
         input,
         AttExpr::AttTr(AttTransition {
-            sourcestate: s.parse().unwrap(),
-            nextstate: n.parse().unwrap(),
-            isymbol: i.into_iter().collect(),
-            osymbol: o.into_iter().collect(),
-            weight: w,
+            sourcestate: src.parse().unwrap(),
+            nextstate: nxt.parse().unwrap(),
+            isymbol: isym.into_iter().collect(),
+            osymbol: osym.into_iter().collect(),
+            weight,
         }),
     ))
 }
