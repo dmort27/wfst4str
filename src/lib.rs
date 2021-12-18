@@ -166,7 +166,7 @@ impl WeightedFst {
         Ok(self
             .fst
             .input_symbols()
-            .unwrap()
+            .unwrap_or(&Arc::new(SymbolTable::new()))
             .iter()
             .map(|(_, s)| s.to_string())
             .collect())
@@ -176,7 +176,7 @@ impl WeightedFst {
         Ok(self
             .fst
             .output_symbols()
-            .unwrap()
+            .unwrap_or(&Arc::new(SymbolTable::new()))
             .iter()
             .map(|(_, s)| s.to_string())
             .collect())
@@ -216,7 +216,9 @@ impl WeightedFst {
     /// Serializes the wFST to a text file at `path` in AT&T format (OpenFST compatible).
     pub fn write_text(&self, path: &str) -> PyResult<()> {
         let path_output = Path::new(path);
-        self.fst.write_text(path_output).unwrap();
+        self.fst
+            .write_text(path_output)
+            .unwrap_or_else(|e| panic!("Could not write to {}: {}", path, e));
         Ok(())
     }
 
@@ -224,7 +226,7 @@ impl WeightedFst {
     pub fn text(&self) -> String {
         match self.fst.text() {
             Ok(s) => s,
-            Err(s) => panic!("Cannot produce text representation: {}", s),
+            Err(e) => panic!("Cannot produce text representation: {}", e),
         }
     }
 
@@ -263,7 +265,12 @@ impl WeightedFst {
             .get_label(osym)
             .unwrap_or(0);
         let tr = Tr::<TropicalWeight>::new(*ilabel, *olabel, weight, next_state);
-        self.fst.add_tr(source_state, tr).unwrap();
+        self.fst.add_tr(source_state, tr).unwrap_or_else(|e| {
+            println!(
+                "Cannot add Tr from {:?} to {:?}: {}",
+                source_state, next_state, e
+            )
+        });
         Ok(())
     }
 
@@ -276,7 +283,10 @@ impl WeightedFst {
 
     /// Converts a string to a linear wFST using the input `SymbolTable` of the wFST.
     pub fn to_linear_fst(&self, s: &str) -> PyResult<WeightedFst> {
-        let symt = self.fst.input_symbols().unwrap();
+        let symt = self
+            .fst
+            .input_symbols()
+            .expect("wFST lacks input symbol table.");
         let mut syms: Vec<String> = Vec::new();
         let mut acc: String = String::from("");
         for c in s.chars() {
@@ -295,7 +305,10 @@ impl WeightedFst {
         let lfst: VectorFst<TropicalWeight> = acceptor(
             &syms
                 .iter()
-                .map(|x| symt.get_label(x).unwrap())
+                .map(|x| {
+                    symt.get_label(x)
+                        .unwrap_or_else(|| panic!("Input symbol table lacks symbol \"{}\".", x))
+                })
                 .collect::<Vec<usize>>()[..],
             semiring_one(),
         );
@@ -304,8 +317,10 @@ impl WeightedFst {
 
     /// Applies the wFST to a string (consisting of symbols in the wFSTs `SymbolTable`s).
     pub fn apply(&self, s: &str) -> PyResult<Vec<String>> {
-        let lfst = self.to_linear_fst(s).unwrap();
-        let mut fst2 = lfst.compose(self).unwrap();
+        let lfst = self
+            .to_linear_fst(s)
+            .unwrap_or_else(|e| panic!("Cannot linearize \"{}\": {}", s, e));
+        let mut fst2 = lfst.compose(self).expect("Cannot compose wFSTs.");
         fst2.fst.set_symts_from_fst(&self.fst);
         match fst2.num_states() {
             0 => Ok(Vec::new()),
@@ -349,7 +364,11 @@ impl WeightedFst {
         let mut visited = vec![false; self.fst.num_states()];
         while !stack.is_empty() {
             let s = stack.pop().unwrap();
-            for tr in fst2.get_trs(s).unwrap().iter() {
+            for tr in fst2
+                .get_trs(s)
+                .unwrap_or_else(|e| panic!("State {} not present in wFST: {}", s, e))
+                .iter()
+            {
                 if visited[tr.nextstate] {
                     return Ok(true);
                 } else {
@@ -365,7 +384,8 @@ impl WeightedFst {
     /// input labels as input and output labels.
     pub fn explode_oth(&mut self) -> PyResult<()> {
         let fst2 = &mut self.fst;
-        let symt = fst2.input_symbols().unwrap();
+        let empty_symt = Arc::new(SymbolTable::new());
+        let symt = fst2.input_symbols().unwrap_or(&empty_symt);
         let oth_lab = symt
             .get_label("<oth>")
             .unwrap_or_else(|| panic!("SymbolTable does not include '<oth>'"));
@@ -390,16 +410,22 @@ impl WeightedFst {
                 .collect();
             for tr in normal.iter() {
                 fst2.emplace_tr(s, tr.ilabel, tr.olabel, tr.weight, tr.nextstate)
-                    .unwrap();
+                    .unwrap_or_else(|e| {
+                        panic!("Cannot create Tr; state {} does not exist: {}", s, e)
+                    });
             }
             for tr in special {
                 if tr.ilabel == eps_lab {
                     fst2.emplace_tr(s, tr.ilabel, tr.olabel, tr.weight, tr.nextstate)
-                        .unwrap();
+                        .unwrap_or_else(|e| {
+                            panic!("Cannot create Tr; state {} does not exist: {}", s, e)
+                        });
                 } else {
                     for lab in complement.iter() {
                         fst2.emplace_tr(s, *lab, *lab, tr.weight, tr.nextstate)
-                            .unwrap();
+                            .unwrap_or_else(|e| {
+                                panic!("Cannot create Tr; state {} does not exist: {}", s, e)
+                            });
                     }
                 }
             }
@@ -422,14 +448,21 @@ impl WeightedFst {
     /// Returns the shortest path through the wFST.
     pub fn shortest_path(&self) -> PyResult<Vec<String>> {
         let mut shortest = WeightedFst {
-            fst: shortest_path(&self.fst).unwrap(),
+            fst: shortest_path(&self.fst)
+                .unwrap_or_else(|e| panic!("Cannot convert wFST to shortest path: {}", e)),
         };
-        shortest
-            .fst
-            .set_input_symbols(self.fst.input_symbols().unwrap().clone());
-        shortest
-            .fst
-            .set_output_symbols(self.fst.output_symbols().unwrap().clone());
+        shortest.fst.set_input_symbols(
+            self.fst
+                .input_symbols()
+                .unwrap_or(&Arc::new(SymbolTable::new()))
+                .clone(),
+        );
+        shortest.fst.set_output_symbols(
+            self.fst
+                .output_symbols()
+                .unwrap_or(&Arc::new(SymbolTable::new()))
+                .clone(),
+        );
         shortest.fst.set_symts_from_fst(&self.fst);
         shortest.paths_as_strings()
     }
@@ -450,33 +483,43 @@ impl WeightedFst {
                             .unwrap_or_else(|| panic!("No output symbol table!"));
                         let ilabel = isymt
                             .get_label(tr_expr.isymbol.clone())
-                            .unwrap_or_else(|| panic!("Unkown symbol '{:?}'", tr_expr.isymbol));
+                            .unwrap_or_else(|| panic!("Unkown symbol {:?}", tr_expr.isymbol));
                         let olabel = osymt
                             .get_label(tr_expr.osymbol.clone())
-                            .unwrap_or_else(|| panic!("Unkown symbol '{:?}'", tr_expr.osymbol));
+                            .unwrap_or_else(|| panic!("Unkown symbol {:?}", tr_expr.osymbol));
                         let tr = Tr::<TropicalWeight>::new(
                             ilabel,
                             olabel,
                             tr_expr.weight,
                             tr_expr.nextstate,
                         );
-                        self.fst.add_tr(tr_expr.sourcestate, tr).unwrap_or({
-                            println!(
-                                "Could not create transition from {:?} to {:?}.",
-                                tr_expr.sourcestate, tr_expr.nextstate
-                            )
-                        });
-                        ()
+                        while !(self.fst.states_iter().any(|x| x == tr_expr.sourcestate)
+                            && self.fst.states_iter().any(|x| x == tr_expr.nextstate))
+                        {
+                            self.fst.add_state();
+                        }
+                        self.fst
+                            .add_tr(tr_expr.sourcestate, tr)
+                            .unwrap_or_else(|e| {
+                                println!(
+                                    "Could not create transition from {:?} to {:?}: {:?}.",
+                                    tr_expr.sourcestate, tr_expr.nextstate, e
+                                );
+                            });
                     }
                     AttExpr::AttFinal(fs_expr) => {
+                        while !(self.fst.states_iter().any(|x| x == fs_expr.state)) {
+                            self.fst.add_state();
+                        }
                         self.fst
                             .set_final(fs_expr.state, fs_expr.finalweight)
                             .unwrap_or_else(|e| {
-                                panic!("No such state: {:?} {:?}", fs_expr.state, e)
+                                println!("No such state: {:?} {:?}", fs_expr.state, e)
                             });
                     }
                     AttExpr::AttNone => (),
                 }
+                // println!("self.fst: {:?}", self.fst);
             }
         }
         Ok(())
@@ -506,7 +549,8 @@ impl WeightedFst {
 #[pyfunction]
 pub fn wfst_from_text_string(fst_string: &str) -> PyResult<WeightedFst> {
     Ok(WeightedFst {
-        fst: VectorFst::from_text_string(fst_string).unwrap(),
+        fst: VectorFst::from_text_string(fst_string)
+            .unwrap_or_else(|e| panic!("Cannot deserialize wFST: {}", e)),
     })
 }
 
@@ -514,7 +558,8 @@ pub fn wfst_from_text_string(fst_string: &str) -> PyResult<WeightedFst> {
 pub fn wfst_from_text_file(path_text_fst: &str) -> PyResult<WeightedFst> {
     let fst_path = Path::new(path_text_fst);
     Ok(WeightedFst {
-        fst: VectorFst::read_text(fst_path).unwrap(),
+        fst: VectorFst::read_text(fst_path)
+            .unwrap_or_else(|e| panic!("Cannot read wFST at path {}: {}", path_text_fst, e)),
     })
 }
 
@@ -558,9 +603,9 @@ pub fn att_transition(input: &str) -> IResult<&str, AttExpr> {
         space1,
         recognize(digit1),
         space1,
-        many1(none_of(" \t")),
+        many1(none_of(" \t\r\n")),
         space1,
-        many1(none_of(" \t")),
+        many1(none_of(" \t\r\n")),
         space1,
         float,
     ));
@@ -622,9 +667,5 @@ fn wfst4str(_py: Python, m: &PyModule) -> PyResult<()> {
     m.add_class::<SymTab>()?;
     m.add_class::<WeightedFst>()?;
     m.add_function(wrap_pyfunction!(wfst_from_text_string, m)?)?;
-    m.add_function(wrap_pyfunction!(wfst_from_text_string, m)?)?;
-    // m.add_function(wrap_pyfunction!(compose, m)?)?;
-    // m.add_function(wrap_pyfunction!(tr_ilabel_sort, m)?)?;
-    // m.add_function(wrap_pyfunction!(tr_olabel_sort, m)?)?;
     Ok(())
 }
