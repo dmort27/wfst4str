@@ -24,3 +24,6 @@ features = ["extension-module"]
 
 [dependencies.anyhow]
 version = "1.0.47"
+
+[dependencies.nom]
+version = "7.1.0"

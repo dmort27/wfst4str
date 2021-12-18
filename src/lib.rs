@@ -437,10 +437,20 @@ impl WeightedFst {
             for expr in exprs {
                 match expr {
                     AttExpr::AttTr(tr_expr) => {
-                        let isymt = self.fst.input_symbols().unwrap_or_else(|| panic!("No input symbol table!"));
-                        let osymt = self.fst.output_symbols().unwrap_or_else(|| panic!("No output symbol table!"));
-                        let ilabel = isymt.get_label(tr_expr.isymbol).unwrap();
-                        let olabel = osymt.get_label(tr_expr.osymbol).unwrap();
+                        let isymt = self
+                            .fst
+                            .input_symbols()
+                            .unwrap_or_else(|| panic!("No input symbol table!"));
+                        let osymt = self
+                            .fst
+                            .output_symbols()
+                            .unwrap_or_else(|| panic!("No output symbol table!"));
+                        let ilabel = isymt
+                            .get_label(tr_expr.isymbol.clone())
+                            .unwrap_or_else(|| panic!("Unkown symbol '{:?}'", tr_expr.isymbol));
+                        let olabel = osymt
+                            .get_label(tr_expr.osymbol.clone())
+                            .unwrap_or_else(|| panic!("Unkown symbol '{:?}'", tr_expr.osymbol));
                         let tr = Tr::<TropicalWeight>::new(
                             ilabel,
                             olabel,
@@ -448,12 +458,19 @@ impl WeightedFst {
                             tr_expr.nextstate,
                         );
                         self.fst.add_tr(tr_expr.sourcestate, tr).unwrap_or({
-                            println!("Could not create transition from {:?} to {:?}."， tr_expr.sourcestate, tr_expr.nextstate);
+                            println!(
+                                "Could not create transition from {:?} to {:?}.",
+                                tr_expr.sourcestate, tr_expr.nextstate
+                            );
                             ()
                         });
                     }
                     AttExpr::AttFinal(fs_expr) => {
-                        self.fst.set_final(fs_expr.state, fs_expr.finalweight).unwrap_or_else(|e| panic!("No such state: {:?} {:?}", fs_expr.state, e));
+                        self.fst
+                            .set_final(fs_expr.state, fs_expr.finalweight)
+                            .unwrap_or_else(|e| {
+                                panic!("No such state: {:?} {:?}", fs_expr.state, e)
+                            });
                     }
                     AttExpr::AttNone => (),
                 }
