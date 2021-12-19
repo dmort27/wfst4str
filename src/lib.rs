@@ -340,9 +340,47 @@ impl WeightedFst {
         })
     }
 
+    /// Returns a determinized wFST weakly equivalent to `self`.
+    pub fn determinize(&self) -> PyResult<WeightedFst> {
+        Ok(WeightedFst {
+            fst: determinize::determinize(&self.fst).expect("Could not determinize wFST"),
+        })
+    }
+
     /// Concatenates a wFST (`other`) to the wFST in place.
     pub fn concat_in_place(&mut self, other: &WeightedFst) {
         concat::concat(&mut self.fst, &other.fst).expect("Cannot concatenate wFST!")
+    }
+
+    /// Returns the inversion of a wFST.
+    pub fn invert(&self) -> PyResult<WeightedFst> {
+        let mut fst = self.fst.clone();
+        invert(&mut fst);
+        Ok(WeightedFst{
+            fst
+        })
+    }
+
+    /// Inverts a wFST in place.
+    pub fn invert_in_place(&mut self) {
+        invert(&mut self.fst)
+    }
+
+    /// Returns a minimized wFST. Minimizes any deterministic wFST. Also
+    /// minimizes non-deterministic wFSTs if they use an idempotent semiring.
+    pub fn minimize(&self) -> PyResult<WeightedFst> {
+        let mut fst = self.fst.clone();
+        minimize(&mut fst).expect("Cannot minimize wFST!");
+        Ok(WeightedFst {
+            fst
+        })
+    }
+
+    /// Minimizes a deterministic wFST in place. Also minizes non-deterministic
+    /// wFSTs if they use an idempotent semiring.
+    pub fn minize_in_place(&mut self) -> PyResult<()> {
+        minimize(&mut self.fst).expect("Cannot minimize wFST!");
+        Ok(())
     }
 
     /// Converts a string to a linear wFST using the input `SymbolTable` of the wFST.
