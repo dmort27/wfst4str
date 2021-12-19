@@ -331,6 +331,20 @@ impl WeightedFst {
         })
     }
 
+    /// Returns the concatentaion of the wFST and another wFST (`other`)
+    pub fn concat(&self, other: &WeightedFst) -> PyResult<WeightedFst> {
+        let mut fst = self.fst.clone();
+        concat::concat(&mut fst, &other.fst).expect("Cannot concatenate wFSTs!");
+        Ok(WeightedFst {
+            fst
+        })
+    }
+
+    /// Concatenates a wFST (`other`) to the wFST in place.
+    pub fn concat_in_place(&mut self, other: &WeightedFst) {
+        concat::concat(&mut self.fst, &other.fst).expect("Cannot concatenate wFST!")
+    }
+
     /// Converts a string to a linear wFST using the input `SymbolTable` of the wFST.
     pub fn to_linear_fst(&self, s: &str) -> PyResult<WeightedFst> {
         let symt = self
