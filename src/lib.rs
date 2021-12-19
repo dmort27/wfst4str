@@ -9,7 +9,7 @@ use nom::{
     IResult,
 };
 use pyo3::prelude::*;
-use rustfst::algorithms::compose;
+use rustfst::algorithms::{closure, compose, concat, determinize, invert, minimize, project};
 use rustfst::algorithms::tr_sort as rs_tr_sort;
 use rustfst::fst_impls::VectorFst;
 use rustfst::fst_traits::CoreFst;
@@ -143,6 +143,24 @@ impl Default for WeightedFst {
 #[pymethods]
 impl WeightedFst {
     /// Constructs a [`WeightedFst`] object.
+    /// 
+    /// # Examples
+    /// 
+    /// ## Python
+    /// 
+    /// ```python
+    /// import wfst4str
+    /// t = wfst4str.WeightedFst()
+    /// sym = ['a', 'b', 'c']
+    /// t.set_input_symbols(sym)
+    /// t.set_output_symbols(sym)
+    /// q0 = t.add_state()
+    /// q1 = t.add_state()
+    /// t.set_start(q0)
+    /// q1.set_final(q1, 0.0)
+    /// t.add_tr(0, 1, 'a', 'b')
+    /// assert (t.apply('a') == 'b')
+    /// ```
     #[new]
     pub fn new() -> Self {
         WeightedFst {
@@ -162,6 +180,7 @@ impl WeightedFst {
         self.fst.set_output_symbols(Arc::new(symt.symt))
     }
 
+    /// Returns the input symbols of the wFST as a list
     pub fn get_input_symbols(&self) -> PyResult<Vec<String>> {
         Ok(self
             .fst
@@ -172,6 +191,7 @@ impl WeightedFst {
             .collect())
     }
 
+    /// Returns the output symbols of the wFST as a list
     pub fn get_output_symbols(&self) -> PyResult<Vec<String>> {
         Ok(self
             .fst
@@ -187,7 +207,7 @@ impl WeightedFst {
         self.fst.add_states(n)
     }
 
-    /// Adds one new state and returns the corresponding number.
+    /// Adds one new state and returns the corresponding ID (an integer).
     pub fn add_state(&mut self) -> StateId {
         self.fst.add_state()
     }
@@ -272,6 +292,36 @@ impl WeightedFst {
             )
         });
         Ok(())
+    }
+
+    // Algorithms
+
+    /// Kleene closure of a wFST via mutation
+    pub fn closure_in_place_star(&mut self) {
+        closure::closure(&mut self.fst, closure::ClosureType::ClosureStar)
+    }
+
+    /// Kleene plus closure of a wFST via mutation
+    pub fn closure_in_place_plus(&mut self) {
+        closure::closure(&mut self.fst, closure::ClosureType::ClosurePlus)
+    }
+
+    /// Returns the Kleene closure of a wFST
+    pub fn closure_star(&self) -> PyResult<WeightedFst> {
+        let mut fst = self.fst.clone();
+        closure::closure(&mut fst, closure::ClosureType::ClosureStar);
+        Ok(WeightedFst {
+            fst
+        })
+    }
+
+    /// Returns the Kleene plus closure of a wFST
+    pub fn closure_plus(&self) -> PyResult<WeightedFst> {
+        let mut fst = self.fst.clone();
+        closure::closure(&mut fst, closure::ClosureType::ClosurePlus);
+        Ok(WeightedFst {
+            fst
+        })
     }
 
     /// Returns the composition of the wFST and another wFST (`other`)
@@ -467,7 +517,7 @@ impl WeightedFst {
         shortest.paths_as_strings()
     }
 
-    /// Populates a [`WeightedFST`] based on an AT&T description
+    /// Populates a [`WeightedFst`] based on an AT&T description
     pub fn populate_from_att(&mut self, text: &str) -> PyResult<()> {
         if let Ok((_, exprs)) = att_file(text) {
             for expr in exprs {
@@ -526,26 +576,7 @@ impl WeightedFst {
     }
 }
 
-// #[pyfunction]
-// pub fn compose(fst1: &WeightedFst, fst2: &WeightedFst) -> WeightedFst {
-//     match rscompose(fst1.fst.clone(), fst2.fst.clone()) {
-//         Ok(fst) => WeightedFst { fst },
-//         Err(e) => panic!("Cannot compse WFSTs: {}", e),
-//     }
-// }
-
-// #[pyfunction]
-// pub fn tr_ilabel_sort(fst: &mut WeightedFst) {
-//     let _comp = ILabelCompare {};
-//     rs_tr_sort(&mut fst.fst, _comp)
-// }
-
-// #[pyfunction]
-// pub fn tr_olabel_sort(fst: &mut WeightedFst) {
-//     let _comp = OLabelCompare {};
-//     rs_tr_sort(&mut fst.fst, _comp)
-// }
-
+/// Returns an wFST corresponding to `fst_string` (deprecated).
 #[pyfunction]
 pub fn wfst_from_text_string(fst_string: &str) -> PyResult<WeightedFst> {
     Ok(WeightedFst {
@@ -554,6 +585,7 @@ pub fn wfst_from_text_string(fst_string: &str) -> PyResult<WeightedFst> {
     })
 }
 
+/// Returns a wFST corresponding the one represented in the text file `path_text_fst` (deprecated).
 #[pyfunction]
 pub fn wfst_from_text_file(path_text_fst: &str) -> PyResult<WeightedFst> {
     let fst_path = Path::new(path_text_fst);
@@ -563,6 +595,7 @@ pub fn wfst_from_text_file(path_text_fst: &str) -> PyResult<WeightedFst> {
     })
 }
 
+/// A representation of a wFST transition in the AT&T serialization.
 #[derive(Debug, PartialEq)]
 pub struct AttTransition {
     sourcestate: StateId,
@@ -572,12 +605,14 @@ pub struct AttTransition {
     weight: f32,
 }
 
+/// A representation of a wFST final state declaration in the AT&T serialization.
 #[derive(Debug, PartialEq)]
 pub struct AttFinalState {
     state: StateId,
     finalweight: f32,
 }
 
+/// A representation of an expression in the AT&T serialization.
 #[derive(Debug, PartialEq)]
 pub enum AttExpr {
     AttTr(AttTransition),
@@ -585,6 +620,7 @@ pub enum AttExpr {
     AttNone,
 }
 
+/// A parser for final state expressions in AT&T serialization.
 pub fn att_final_state(input: &str) -> IResult<&str, AttExpr> {
     let mut parser = tuple((recognize(digit1), space1, float));
     let (input, (s, _, w)) = parser(input)?;
@@ -597,6 +633,7 @@ pub fn att_final_state(input: &str) -> IResult<&str, AttExpr> {
     ))
 }
 
+/// A parser for transitions in the AT&T serialization.
 pub fn att_transition(input: &str) -> IResult<&str, AttExpr> {
     let mut parser = tuple((
         recognize(digit1),
@@ -622,23 +659,27 @@ pub fn att_transition(input: &str) -> IResult<&str, AttExpr> {
     ))
 }
 
+/// A parser for empty expressions in the AT&T serialization.
 pub fn att_none(input: &str) -> IResult<&str, AttExpr> {
     let (input, _) = success("")(input)?;
     Ok((input, AttExpr::AttNone))
 }
 
+/// A parser for rows in the AT&T serialization.
 pub fn att_row(input: &str) -> IResult<&str, AttExpr> {
     let mut parser = alt((att_transition, att_final_state, att_none));
     let (input, row) = parser(input)?;
     Ok((input, row))
 }
 
+/// A parser for strings/text files in the AT&T serialization.
 pub fn att_file(input: &str) -> IResult<&str, Vec<AttExpr>> {
     let mut parser = separated_list0(line_ending, att_row);
     let (input, rows) = parser(input)?;
     Ok((input, rows))
 }
 
+/// Returns the number of states in the AT&T serialization of an wFST.
 pub fn att_num_states(text: &str) -> usize {
     match att_file(text) {
         Ok((_, rows)) => {
