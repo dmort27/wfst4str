@@ -1,15 +1,5 @@
-use nom::{
-    branch::alt,
-    character::complete::{digit1, line_ending, none_of, space1},
-    combinator::{recognize, success},
-    // error::ErrorKind,
-    multi::{many1, separated_list0},
-    number::complete::float,
-    sequence::tuple,
-    IResult,
-};
 use pyo3::prelude::*;
-use rustfst::algorithms::{closure, compose, concat, determinize, invert, minimize, project};
+use rustfst::algorithms::{closure, compose, concat, determinize, invert, minimize, project, ProjectType};
 use rustfst::algorithms::tr_sort as rs_tr_sort;
 use rustfst::fst_impls::VectorFst;
 use rustfst::fst_traits::CoreFst;
@@ -19,6 +9,8 @@ use rustfst::utils::acceptor;
 use std::path::Path;
 use std::sync::Arc;
 // use nom::{Err, error::ErrorKind};
+
+pub mod att_parse;
 
 /// Wraps a [`rustfst`] SymbolTable struct as a Python class.
 ///
@@ -383,6 +375,34 @@ impl WeightedFst {
         Ok(())
     }
 
+    /// Project the input labels of a wFST, replacing the output labels with them.
+    pub fn project_input(&self) -> PyResult<WeightedFst> {
+        let mut fst = self.fst.clone();
+        project(&mut fst, ProjectType::ProjectInput);
+        Ok(WeightedFst {
+            fst
+        })
+    }
+
+    /// Project the input labels of a wFST, replacing the output labels with them.
+    pub fn project_output(&self) -> PyResult<WeightedFst> {
+        let mut fst = self.fst.clone();
+        project(&mut fst, ProjectType::ProjectOutput);
+        Ok(WeightedFst {
+            fst
+        })
+    }
+
+    /// In-place input projection of the wFST.
+    pub fn project_in_place_input(&mut self) {
+        project(&mut self.fst, ProjectType::ProjectInput);
+    }
+
+    /// In-place output projection of the wFST.
+    pub fn project_in_place_output(&mut self) {
+        project(&mut self.fst, ProjectType::ProjectOutput);
+    }
+
     /// Converts a string to a linear wFST using the input `SymbolTable` of the wFST.
     pub fn to_linear_fst(&self, s: &str) -> PyResult<WeightedFst> {
         let symt = self
@@ -571,10 +591,10 @@ impl WeightedFst {
 
     /// Populates a [`WeightedFst`] based on an AT&T description
     pub fn populate_from_att(&mut self, text: &str) -> PyResult<()> {
-        if let Ok((_, exprs)) = att_file(text) {
+        if let Ok((_, exprs)) = att_parse::att_file(text) {
             for expr in exprs {
                 match expr {
-                    AttExpr::AttTr(tr_expr) => {
+                    att_parse::AttExpr::AttTr(tr_expr) => {
                         let isymt = self
                             .fst
                             .input_symbols()
@@ -609,7 +629,7 @@ impl WeightedFst {
                                 );
                             });
                     }
-                    AttExpr::AttFinal(fs_expr) => {
+                    att_parse::AttExpr::AttFinal(fs_expr) => {
                         while !(self.fst.states_iter().any(|x| x == fs_expr.state)) {
                             self.fst.add_state();
                         }
@@ -619,7 +639,7 @@ impl WeightedFst {
                                 println!("No such state: {:?} {:?}", fs_expr.state, e)
                             });
                     }
-                    AttExpr::AttNone => (),
+                    att_parse::AttExpr::AttNone => (),
                 }
                 // println!("self.fst: {:?}", self.fst);
             }
@@ -645,113 +665,6 @@ pub fn wfst_from_text_file(path_text_fst: &str) -> PyResult<WeightedFst> {
         fst: VectorFst::read_text(fst_path)
             .unwrap_or_else(|e| panic!("Cannot read wFST at path {}: {}", path_text_fst, e)),
     })
-}
-
-/// A representation of a wFST transition in the AT&T serialization.
-#[derive(Debug, PartialEq)]
-pub struct AttTransition {
-    sourcestate: StateId,
-    nextstate: StateId,
-    isymbol: String,
-    osymbol: String,
-    weight: f32,
-}
-
-/// A representation of a wFST final state declaration in the AT&T serialization.
-#[derive(Debug, PartialEq)]
-pub struct AttFinalState {
-    state: StateId,
-    finalweight: f32,
-}
-
-/// A representation of an expression in the AT&T serialization.
-#[derive(Debug, PartialEq)]
-pub enum AttExpr {
-    AttTr(AttTransition),
-    AttFinal(AttFinalState),
-    AttNone,
-}
-
-/// A parser for final state expressions in AT&T serialization.
-pub fn att_final_state(input: &str) -> IResult<&str, AttExpr> {
-    let mut parser = tuple((recognize(digit1), space1, float));
-    let (input, (s, _, w)) = parser(input)?;
-    Ok((
-        input,
-        AttExpr::AttFinal(AttFinalState {
-            state: s.parse().unwrap_or(0),
-            finalweight: w,
-        }),
-    ))
-}
-
-/// A parser for transitions in the AT&T serialization.
-pub fn att_transition(input: &str) -> IResult<&str, AttExpr> {
-    let mut parser = tuple((
-        recognize(digit1),
-        space1,
-        recognize(digit1),
-        space1,
-        many1(none_of(" \t\r\n")),
-        space1,
-        many1(none_of(" \t\r\n")),
-        space1,
-        float,
-    ));
-    let (input, (src, _, nxt, _, isym, _, osym, _, weight)) = parser(input)?;
-    Ok((
-        input,
-        AttExpr::AttTr(AttTransition {
-            sourcestate: src.parse().unwrap(),
-            nextstate: nxt.parse().unwrap(),
-            isymbol: isym.into_iter().collect(),
-            osymbol: osym.into_iter().collect(),
-            weight,
-        }),
-    ))
-}
-
-/// A parser for empty expressions in the AT&T serialization.
-pub fn att_none(input: &str) -> IResult<&str, AttExpr> {
-    let (input, _) = success("")(input)?;
-    Ok((input, AttExpr::AttNone))
-}
-
-/// A parser for rows in the AT&T serialization.
-pub fn att_row(input: &str) -> IResult<&str, AttExpr> {
-    let mut parser = alt((att_transition, att_final_state, att_none));
-    let (input, row) = parser(input)?;
-    Ok((input, row))
-}
-
-/// A parser for strings/text files in the AT&T serialization.
-pub fn att_file(input: &str) -> IResult<&str, Vec<AttExpr>> {
-    let mut parser = separated_list0(line_ending, att_row);
-    let (input, rows) = parser(input)?;
-    Ok((input, rows))
-}
-
-/// Returns the number of states in the AT&T serialization of an wFST.
-pub fn att_num_states(text: &str) -> usize {
-    match att_file(text) {
-        Ok((_, rows)) => {
-            let mut max_state = 0;
-            for row in rows {
-                match row {
-                    AttExpr::AttTr(tr) => {
-                        max_state = max_state.max(tr.sourcestate);
-                        max_state = max_state.max(tr.nextstate);
-                    }
-                    AttExpr::AttFinal(f) => {
-                        max_state = max_state.max(f.state);
-                    }
-                    AttExpr::AttNone => (),
-                }
-            }
-            max_state
-        }
-        _ => panic!("Cannot parse string as AT&T wFST."),
-    }
 }
 
 #[pymodule]
