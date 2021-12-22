@@ -10,7 +10,7 @@ use nom::{
 };
 use rustfst::prelude::*;
 
-    /// A representation of a wFST transition in the AT&T serialization.
+/// A representation of a wFST transition in the AT&T serialization.
 #[derive(Debug, PartialEq)]
 pub struct AttTransition {
     pub sourcestate: StateId,
