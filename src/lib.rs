@@ -1,14 +1,16 @@
 use pyo3::prelude::*;
-use rustfst::algorithms::{closure, compose, concat, determinize, invert, minimize, project, ProjectType};
 use rustfst::algorithms::tr_sort as rs_tr_sort;
+use rustfst::algorithms::{
+    closure, compose, concat, determinize, invert, minimize, project, union, ProjectType,
+};
 use rustfst::fst_impls::VectorFst;
-use rustfst::fst_traits::CoreFst;
-use rustfst::fst_traits::SerializableFst;
+use rustfst::fst_traits::{CoreFst, SerializableFst};
 use rustfst::prelude::*;
 use rustfst::utils::acceptor;
+use std::collections::HashSet;
+// use std::iter::FromIterator;
 use std::path::Path;
 use std::sync::Arc;
-// use nom::{Err, error::ErrorKind};
 
 pub mod att_parse;
 
@@ -135,11 +137,11 @@ impl Default for WeightedFst {
 #[pymethods]
 impl WeightedFst {
     /// Constructs a [`WeightedFst`] object.
-    /// 
+    ///
     /// # Examples
-    /// 
+    ///
     /// ## Python
-    /// 
+    ///
     /// ```python
     /// import wfst4str
     /// t = wfst4str.WeightedFst()
@@ -302,18 +304,14 @@ impl WeightedFst {
     pub fn closure_star(&self) -> PyResult<WeightedFst> {
         let mut fst = self.fst.clone();
         closure::closure(&mut fst, closure::ClosureType::ClosureStar);
-        Ok(WeightedFst {
-            fst
-        })
+        Ok(WeightedFst { fst })
     }
 
     /// Returns the Kleene plus closure of a wFST
     pub fn closure_plus(&self) -> PyResult<WeightedFst> {
         let mut fst = self.fst.clone();
         closure::closure(&mut fst, closure::ClosureType::ClosurePlus);
-        Ok(WeightedFst {
-            fst
-        })
+        Ok(WeightedFst { fst })
     }
 
     /// Returns the composition of the wFST and another wFST (`other`)
@@ -327,9 +325,7 @@ impl WeightedFst {
     pub fn concat(&self, other: &WeightedFst) -> PyResult<WeightedFst> {
         let mut fst = self.fst.clone();
         concat::concat(&mut fst, &other.fst).expect("Cannot concatenate wFSTs!");
-        Ok(WeightedFst {
-            fst
-        })
+        Ok(WeightedFst { fst })
     }
 
     /// Returns a determinized wFST weakly equivalent to `self`.
@@ -348,9 +344,7 @@ impl WeightedFst {
     pub fn invert(&self) -> PyResult<WeightedFst> {
         let mut fst = self.fst.clone();
         invert(&mut fst);
-        Ok(WeightedFst{
-            fst
-        })
+        Ok(WeightedFst { fst })
     }
 
     /// Inverts a wFST in place.
@@ -363,9 +357,7 @@ impl WeightedFst {
     pub fn minimize(&self) -> PyResult<WeightedFst> {
         let mut fst = self.fst.clone();
         minimize(&mut fst).expect("Cannot minimize wFST!");
-        Ok(WeightedFst {
-            fst
-        })
+        Ok(WeightedFst { fst })
     }
 
     /// Minimizes a deterministic wFST in place. Also minizes non-deterministic
@@ -379,18 +371,14 @@ impl WeightedFst {
     pub fn project_input(&self) -> PyResult<WeightedFst> {
         let mut fst = self.fst.clone();
         project(&mut fst, ProjectType::ProjectInput);
-        Ok(WeightedFst {
-            fst
-        })
+        Ok(WeightedFst { fst })
     }
 
     /// Project the input labels of a wFST, replacing the output labels with them.
     pub fn project_output(&self) -> PyResult<WeightedFst> {
         let mut fst = self.fst.clone();
         project(&mut fst, ProjectType::ProjectOutput);
-        Ok(WeightedFst {
-            fst
-        })
+        Ok(WeightedFst { fst })
     }
 
     /// In-place input projection of the wFST.
@@ -403,8 +391,20 @@ impl WeightedFst {
         project(&mut self.fst, ProjectType::ProjectOutput);
     }
 
+    /// Returns the union of the wFST and another (`other`).
+    pub fn union(&self, other: &WeightedFst) -> PyResult<WeightedFst> {
+        let mut fst = self.fst.clone();
+        union::union(&mut fst, &other.fst).expect("Cannot union wFSTs!");
+        Ok(WeightedFst { fst })
+    }
+
+    /// In-placew union of the wFST and another (`other`).
+    pub fn union_in_place(&mut self, other: &WeightedFst) {
+        union::union(&mut self.fst, &other.fst).expect("Cannot union wFSTs!");
+    }
+
     /// Converts a string to a linear wFST using the input `SymbolTable` of the wFST.
-    pub fn to_linear_fst(&self, s: &str) -> PyResult<WeightedFst> {
+    pub fn to_linear_fst_old(&self, s: &str) -> PyResult<WeightedFst> {
         let symt = self
             .fst
             .input_symbols()
@@ -435,6 +435,28 @@ impl WeightedFst {
             semiring_one(),
         );
         Ok(WeightedFst { fst: lfst })
+    }
+
+    pub fn to_linear_fst(&self, s: &str) -> PyResult<WeightedFst> {
+        let symt = self
+            .fst
+            .input_symbols()
+            .expect("wFST lacks input symbol table.");
+        let syms: Vec<String> = s.chars().map(|x| x.to_string()).collect();
+        fn semiring_one<W: Semiring>() -> W {
+            W::one()
+        }
+        let fst: VectorFst<TropicalWeight> = acceptor(
+            &syms
+                .iter()
+                .map(|x| {
+                    symt.get_label(x)
+                        .unwrap_or_else(|| panic!("Input symbol table lacks symbol\"{}\".", x))
+                })
+                .collect::<Vec<usize>>(),
+            semiring_one(),
+        );
+        Ok(WeightedFst { fst })
     }
 
     /// Applies the wFST to a string (consisting of symbols in the wFSTs `SymbolTable`s).
@@ -504,7 +526,7 @@ impl WeightedFst {
 
     /// Replaces transitions labeled with <oth> with transitions with all unused
     /// input labels as input and output labels.
-    pub fn explode_oth(&mut self) -> PyResult<()> {
+    pub fn explode_oth_old(&mut self) -> PyResult<()> {
         let fst2 = &mut self.fst;
         let empty_symt = Arc::new(SymbolTable::new());
         let symt = fst2.input_symbols().unwrap_or(&empty_symt);
@@ -549,6 +571,41 @@ impl WeightedFst {
                                 panic!("Cannot create Tr; state {} does not exist: {}", s, e)
                             });
                     }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn explode_oth(&mut self, special: HashSet<String>) -> PyResult<()> {
+        let fst = &mut self.fst; // Make a mutual reference to the inner field of &self to reduce boilerplate
+        let empty_symt = Arc::new(SymbolTable::new());
+        let symt = fst.input_symbols().unwrap_or(&empty_symt);
+        let special = &mut special.clone();
+        special.insert("<eps>".to_string());
+        special.insert("<oth>".to_string());
+        let oth_label = symt
+            .get_label("<oth>")
+            .unwrap_or_else(|| panic!("SymbolTable does not include '<oth>'"));
+        let normal: Vec<_> = symt
+            .iter()
+            .filter(|(_, s)| !special.contains(&s.to_string()))
+            .map(|(x, _)| x)
+            .collect();
+        let normal_set: HashSet<Label> = normal.into_iter().collect();
+        for s in fst.states_iter() {
+            let trs: Vec<Tr<TropicalWeight>> = fst.pop_trs(s).unwrap_or_default().clone();
+            let outbound: HashSet<Label> = trs.iter().map(|tr| tr.ilabel).collect();
+            let difference: HashSet<Label> = normal_set.difference(&outbound).map(|&x| x).collect();
+            for tr in trs.iter() {
+                if tr.ilabel == oth_label {
+                    for &lab in &difference {
+                        fst.emplace_tr(s, lab, lab, tr.weight, tr.nextstate)
+                            .unwrap_or_else(|e| panic!("Cannot create Tr: {}", e));
+                    }
+                } else {
+                    fst.emplace_tr(s, tr.ilabel, tr.olabel, tr.weight, tr.nextstate)
+                        .unwrap_or_else(|e| panic!("Cannot create Tr: {}", e));
                 }
             }
         }
