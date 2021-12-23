@@ -223,7 +223,7 @@ impl WeightedFst {
     }
 
     /// Returns the number of states in the wFST.
-    pub fn num_states(&self) -> usize {
+    pub fn num_states(&self) -> StateId {
         self.fst.num_states()
     }
 
@@ -431,7 +431,7 @@ impl WeightedFst {
                     symt.get_label(x)
                         .unwrap_or_else(|| panic!("Input symbol table lacks symbol \"{}\".", x))
                 })
-                .collect::<Vec<usize>>()[..],
+                .collect::<Vec<Label>>()[..],
             semiring_one(),
         );
         Ok(WeightedFst { fst: lfst })
@@ -453,7 +453,7 @@ impl WeightedFst {
                     symt.get_label(x)
                         .unwrap_or_else(|| panic!("Input symbol table lacks symbol\"{}\".", x))
                 })
-                .collect::<Vec<usize>>(),
+                .collect::<Vec<Label>>(),
             semiring_one(),
         );
         Ok(WeightedFst { fst })
@@ -509,10 +509,10 @@ impl WeightedFst {
             .collect())
     }
 
-    /// Returns true if the wFST has a cycle. Otherwise, it returns false.__rust_force_expr!
+    /// Returns true if the wFST has a cycle. Otherwise, it returns false.
     pub fn is_cyclic(&self) -> PyResult<bool> {
         let fst2 = self.fst.clone();
-        let mut stack: Vec<usize> = Vec::new();
+        let mut stack: Vec<StateId> = Vec::new();
         match fst2.start() {
             Some(s) => stack.push(s),
             _ => panic!("wFST lacks a start state. Aborting."),
@@ -559,7 +559,7 @@ impl WeightedFst {
                 .into_iter()
                 .partition(|x| x.ilabel == oth_lab || x.ilabel == eps_lab);
             let out_labs: Vec<Label> = normal.iter().map(|tr| tr.ilabel).collect();
-            let complement: Vec<usize> = norm_labs
+            let complement: Vec<Label> = norm_labs
                 .iter()
                 .copied()
                 .filter(|x| !out_labs.contains(x))
@@ -589,6 +589,8 @@ impl WeightedFst {
         Ok(())
     }
 
+    /// Replaces transitions labeled with <oth> with transitions with all unused
+    /// input labels as input and output labels.
     pub fn explode_oth(&mut self, special: HashSet<String>) -> PyResult<()> {
         let fst = &mut self.fst; // Make a mutual reference to the inner field of &self to reduce boilerplate
         let empty_symt = Arc::new(SymbolTable::new());
