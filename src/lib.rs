@@ -472,6 +472,18 @@ impl WeightedFst {
         }
     }
 
+    pub fn apply_and_return_for_shortest(&self, s: &str) -> PyResult<Vec<String>> {
+        let fst = self
+            .to_linear_fst(s)
+            .unwrap_or_else(|e| panic!("Cannot linearize \"{}\": {}", s, e));
+        let mut fst2 = fst.compose(self).expect("Cannot compose wFSTs.");
+        fst2.fst.set_symts_from_fst(&self.fst);
+        match fst2.num_states() {
+            0 => Ok(Vec::new()),
+            _ => fst2.shortest_path(),
+        }
+    }
+
     /// Returns strings based upon the output symbols of each path
     pub fn paths_as_strings(&self) -> PyResult<Vec<String>> {
         if self.is_cyclic().unwrap() {
@@ -526,7 +538,7 @@ impl WeightedFst {
 
     /// Replaces transitions labeled with <oth> with transitions with all unused
     /// input labels as input and output labels.
-    pub fn explode_oth_old(&mut self) -> PyResult<()> {
+    fn explode_oth_old(&mut self) -> PyResult<()> {
         let fst2 = &mut self.fst;
         let empty_symt = Arc::new(SymbolTable::new());
         let symt = fst2.input_symbols().unwrap_or(&empty_symt);
@@ -610,6 +622,38 @@ impl WeightedFst {
             }
         }
         Ok(())
+    }
+
+    pub fn sub(&mut self, sym: String, syms: Vec<String>) {
+        let fst = &mut self.fst;
+        let empty_symt = Arc::new(SymbolTable::new());
+        let symt = fst.input_symbols().unwrap_or(&empty_symt);
+        let lab = symt
+            .get_label(&sym)
+            .unwrap_or_else(|| panic!("Symbol table does not include \"{}\"!", sym));
+        let labs: Vec<Label> = syms
+            .iter()
+            .map(|x| {
+                symt.get_label(&x)
+                    .unwrap_or_else(|| panic!("Symbol table does not include \"{}\"!", x))
+            })
+            .collect();
+        for s in fst.states_iter() {
+            let trs: Vec<Tr<TropicalWeight>> = fst.pop_trs(s).unwrap_or_default().clone();
+            for tr in trs {
+                if tr.ilabel == lab {
+                    for &l in labs.iter() {
+                        fst.emplace_tr(s, l, l, tr.weight, tr.nextstate)
+                            .unwrap_or_else(|e| {
+                                panic!("Cannot emplace Tr from state {}: {}", s, e)
+                            });
+                    }
+                } else {
+                    fst.add_tr(s, tr)
+                        .unwrap_or_else(|e| panic!("Cannot add Tr from {}: {}", s, e));
+                }
+            }
+        }
     }
 
     /// Sorts the transitions of a wFST based on its input labels.
