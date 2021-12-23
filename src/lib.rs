@@ -624,6 +624,9 @@ impl WeightedFst {
         Ok(())
     }
 
+    /// Replace transitions with with input symbol `sym` (e.g., "<v>") with a
+    /// set of transitions in which the the input symbols consist of the symbols
+    /// in `syms` (e.g., vec!["a", "e", "i", "o", "u"]).
     pub fn sub(&mut self, sym: String, syms: Vec<String>) {
         let fst = &mut self.fst;
         let empty_symt = Arc::new(SymbolTable::new());
@@ -643,7 +646,7 @@ impl WeightedFst {
             for tr in trs {
                 if tr.ilabel == lab {
                     for &l in labs.iter() {
-                        fst.emplace_tr(s, l, l, tr.weight, tr.nextstate)
+                        fst.emplace_tr(s, l, tr.olabel, tr.weight, tr.nextstate)
                             .unwrap_or_else(|e| {
                                 panic!("Cannot emplace Tr from state {}: {}", s, e)
                             });
