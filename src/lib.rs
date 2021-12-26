@@ -4,9 +4,10 @@ use rustfst::algorithms::{
     closure, compose, concat, determinize, invert, minimize, project, union, ProjectType,
 };
 use rustfst::fst_impls::VectorFst;
-use rustfst::fst_traits::{CoreFst, SerializableFst};
+use rustfst::fst_traits::{CoreFst, ExpandedFst, MutableFst, SerializableFst};
 use rustfst::prelude::*;
-use rustfst::utils::acceptor;
+use rustfst::semirings::{Semiring, TropicalWeight};
+use rustfst::utils::{acceptor, transducer};
 use std::collections::HashSet;
 // use std::iter::FromIterator;
 use std::path::Path;
@@ -404,65 +405,107 @@ impl WeightedFst {
     }
 
     /// Converts a string to a linear wFST using the input `SymbolTable` of the wFST.
-    pub fn to_linear_fst_old(&self, s: &str) -> PyResult<WeightedFst> {
-        let symt = self
-            .fst
-            .input_symbols()
-            .expect("wFST lacks input symbol table.");
-        let mut syms: Vec<String> = Vec::new();
-        let mut acc: String = String::from("");
-        for c in s.chars() {
-            acc.push(c);
-            if !symt.contains_symbol(&acc) {
-                if let Some(n) = acc.pop() {
-                    syms.push(acc);
-                    acc = n.to_string();
-                }
-            }
-        }
-        syms.push(acc);
-        fn semiring_one<W: Semiring>() -> W {
-            W::one()
-        }
-        let lfst: VectorFst<TropicalWeight> = acceptor(
-            &syms
-                .iter()
-                .map(|x| {
-                    symt.get_label(x)
-                        .unwrap_or_else(|| panic!("Input symbol table lacks symbol \"{}\".", x))
-                })
-                .collect::<Vec<Label>>()[..],
-            semiring_one(),
-        );
-        Ok(WeightedFst { fst: lfst })
+    // pub fn to_linear_fst_old(&self, s: &str) -> PyResult<WeightedFst> {
+    //     let symt = self
+    //         .fst
+    //         .input_symbols()
+    //         .expect("wFST lacks input symbol table.");
+    //     let mut syms: Vec<String> = Vec::new();
+    //     let mut acc: String = String::from("");
+    //     for c in s.chars() {
+    //         acc.push(c);
+    //         if !symt.contains_symbol(&acc) {
+    //             if let Some(n) = acc.pop() {
+    //                 syms.push(acc);
+    //                 acc = n.to_string();
+    //             }
+    //         }
+    //     }
+    //     syms.push(acc);
+    //     fn semiring_one<W: Semiring>() -> W {
+    //         W::one()
+    //     }
+    //     let lfst: VectorFst<TropicalWeight> = acceptor(
+    //         &syms
+    //             .iter()
+    //             .map(|x| {
+    //                 symt.get_label(x)
+    //                     .unwrap_or_else(|| panic!("Input symbol table lacks symbol \"{}\".", x))
+    //             })
+    //             .collect::<Vec<Label>>()[..],
+    //         semiring_one(),
+    //     );
+    //     Ok(WeightedFst { fst: lfst })
+    // }
+
+    // pub fn to_linear_fst2(&self, s: &str) -> PyResult<WeightedFst> {
+    //     fn semiring_one<W: Semiring>() -> W {
+    //         W::one()
+    //     }
+    //     let symt = self
+    //         .fst
+    //         .input_symbols()
+    //         .expect("wFST lacks input symbol table.");
+    //     let syms: Vec<String> = s.chars().map(|x| x.to_string()).collect();
+    //     let fst: VectorFst<TropicalWeight> = acceptor(
+    //         &syms
+    //             .iter()
+    //             .map(|x| {
+    //                 symt.get_label(x)
+    //                     .unwrap_or_else(|| panic!("Input symbol table lacks symbol \"{}\".", x))
+    //             })
+    //             .collect::<Vec<Label>>(),
+    //         semiring_one(),
+    //     );
+    //     Ok(WeightedFst { fst })
+    // }
+
+    /// Takes an string and returns a corresponding linear wFST (an acceptor,
+    /// since the input labels are the same as the output labels and it,
+    /// therefore, is functionally a wFSA).
+    pub fn to_linear_acceptor(&self, s: &str) -> PyResult<WeightedFst> {
+        let labs = self.isyms_to_labs(s);
+        let fst: VectorFst<TropicalWeight> = acceptor(&labs, TropicalWeight::one());
+        Ok(WeightedFst { fst })
     }
 
-    pub fn to_linear_fst(&self, s: &str) -> PyResult<WeightedFst> {
+    /// Returns a wFST that transduces between `s1` and `s2`.
+    pub fn to_linear_transducer(&self, s1: &str, s2: &str) -> PyResult<WeightedFst> {
+        let labs1 = self.isyms_to_labs(s1);
+        let labs2 = self.isyms_to_labs(s2);
+        let max_len = labs1.len().max(labs2.len());
+        let labs1: Vec<Label> = labs1
+            .into_iter()
+            .chain(std::iter::repeat(0))
+            .take(max_len)
+            .collect();
+        let labs2: Vec<Label> = labs2
+            .into_iter()
+            .chain(std::iter::repeat(0))
+            .take(max_len)
+            .collect();
+        let fst: VectorFst<TropicalWeight> =
+            transducer(&labs1[..], &labs2[..], TropicalWeight::one());
+        Ok(WeightedFst { fst })
+    }
+
+    pub fn isyms_to_labs(&self, s: &str) -> Vec<Label> {
         let symt = self
             .fst
             .input_symbols()
             .expect("wFST lacks input symbol table.");
-        let syms: Vec<String> = s.chars().map(|x| x.to_string()).collect();
-        fn semiring_one<W: Semiring>() -> W {
-            W::one()
-        }
-        let fst: VectorFst<TropicalWeight> = acceptor(
-            &syms
-                .iter()
-                .map(|x| {
-                    symt.get_label(x)
-                        .unwrap_or_else(|| panic!("Input symbol table lacks symbol\"{}\".", x))
-                })
-                .collect::<Vec<Label>>(),
-            semiring_one(),
-        );
-        Ok(WeightedFst { fst })
+        s.chars()
+            .map(|x| {
+                symt.get_label(x.to_string())
+                    .unwrap_or_else(|| panic!("Input symbol table lacks symbol \"{}\".", x))
+            })
+            .collect::<Vec<Label>>()
     }
 
     /// Applies the wFST to a string (consisting of symbols in the wFSTs `SymbolTable`s).
     pub fn apply(&self, s: &str) -> PyResult<Vec<String>> {
         let lfst = self
-            .to_linear_fst(s)
+            .to_linear_acceptor(s)
             .unwrap_or_else(|e| panic!("Cannot linearize \"{}\": {}", s, e));
         let mut fst2 = lfst.compose(self).expect("Cannot compose wFSTs.");
         fst2.fst.set_symts_from_fst(&self.fst);
@@ -474,7 +517,7 @@ impl WeightedFst {
 
     pub fn apply_and_return_for_shortest(&self, s: &str) -> PyResult<Vec<String>> {
         let fst = self
-            .to_linear_fst(s)
+            .to_linear_acceptor(s)
             .unwrap_or_else(|e| panic!("Cannot linearize \"{}\": {}", s, e));
         let mut fst2 = fst.compose(self).expect("Cannot compose wFSTs.");
         fst2.fst.set_symts_from_fst(&self.fst);
