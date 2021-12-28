@@ -4,12 +4,14 @@ use rustfst::algorithms::{
     closure, compose, concat, determinize, invert, minimize, project, union, ProjectType,
 };
 use rustfst::fst_impls::VectorFst;
+use rustfst::fst_properties::FstProperties;
 use rustfst::fst_traits::{CoreFst, ExpandedFst, MutableFst, SerializableFst};
 use rustfst::prelude::*;
 use rustfst::semirings::{Semiring, TropicalWeight};
 use rustfst::utils::{acceptor, transducer};
 use std::collections::HashSet;
 // use std::iter::FromIterator;
+use std::iter::FromIterator;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -316,7 +318,9 @@ impl WeightedFst {
     }
 
     /// Returns the composition of the wFST and another wFST (`other`)
-    pub fn compose(&self, other: &WeightedFst) -> PyResult<WeightedFst> {
+    pub fn compose(&mut self, other: &mut WeightedFst) -> PyResult<WeightedFst> {
+        self.tr_olabel_sort();
+        other.tr_ilabel_sort();
         Ok(WeightedFst {
             fst: compose::compose(self.fst.clone(), other.fst.clone()).expect("Couldn't compose!"),
         })
@@ -503,53 +507,49 @@ impl WeightedFst {
     }
 
     /// Applies the wFST to a string (consisting of symbols in the wFSTs `SymbolTable`s).
-    pub fn apply(&self, s: &str) -> PyResult<Vec<String>> {
-        let lfst = self
+    pub fn apply(&mut self, s: &str) -> PyResult<HashSet<String>> {
+        let mut lfst = self
             .to_linear_acceptor(s)
             .unwrap_or_else(|e| panic!("Cannot linearize \"{}\": {}", s, e));
         let mut fst2 = lfst.compose(self).expect("Cannot compose wFSTs.");
         fst2.fst.set_symts_from_fst(&self.fst);
         match fst2.num_states() {
-            0 => Ok(Vec::new()),
+            0 => Ok(HashSet::new()),
             _ => fst2.paths_as_strings(),
         }
     }
 
-    pub fn apply_and_return_for_shortest(&self, s: &str) -> PyResult<Vec<String>> {
-        let fst = self
+    pub fn strings_for_shortest_paths(&mut self, s: &str) -> PyResult<HashSet<String>> {
+        let mut fst = self
             .to_linear_acceptor(s)
             .unwrap_or_else(|e| panic!("Cannot linearize \"{}\": {}", s, e));
         let mut fst2 = fst.compose(self).expect("Cannot compose wFSTs.");
         fst2.fst.set_symts_from_fst(&self.fst);
         match fst2.num_states() {
-            0 => Ok(Vec::new()),
+            0 => Ok(HashSet::new()),
             _ => fst2.shortest_path(),
         }
     }
 
     /// Returns strings based upon the output symbols of each path
-    pub fn paths_as_strings(&self) -> PyResult<Vec<String>> {
+    pub fn paths_as_strings(&self) -> PyResult<HashSet<String>> {
         if self.is_cyclic().unwrap() {
             panic!("wFST is cyclic. The set of all paths through it is infinite. Check your wFST for logic errors.`")
         }
-        Ok(self
-            .fst
-            .paths_iter()
-            .map(|p| {
-                p.olabels
-                    .iter()
-                    .map(|&l| {
-                        self.fst
-                            .output_symbols()
-                            .unwrap_or_else(|| panic!("Cannot access output SymbolTable."))
-                            .get_symbol(l)
-                            .unwrap_or("")
-                            .to_string()
-                    })
-                    .collect::<Vec<String>>()
-                    .join("")
-            })
-            .collect())
+        Ok(HashSet::from_iter(self.fst.paths_iter().map(|p| {
+            p.olabels
+                .iter()
+                .map(|&l| {
+                    self.fst
+                        .output_symbols()
+                        .unwrap_or_else(|| panic!("Cannot access output SymbolTable."))
+                        .get_symbol(l)
+                        .unwrap_or("")
+                        .to_string()
+                })
+                .collect::<Vec<String>>()
+                .join("")
+        })))
     }
 
     /// Returns true if the wFST has a cycle. Otherwise, it returns false.
@@ -691,7 +691,7 @@ impl WeightedFst {
             for tr in trs {
                 if tr.ilabel == lab {
                     for &l in labs.iter() {
-                        fst.emplace_tr(s, l, tr.olabel, tr.weight, tr.nextstate)
+                        fst.emplace_tr(s, l, l, tr.weight, tr.nextstate)
                             .unwrap_or_else(|e| {
                                 panic!("Cannot emplace Tr from state {}: {}", s, e)
                             });
@@ -707,17 +707,22 @@ impl WeightedFst {
     /// Sorts the transitions of a wFST based on its input labels.
     pub fn tr_ilabel_sort(&mut self) {
         let _comp = ILabelCompare {};
-        rs_tr_sort(&mut self.fst, _comp)
+        rs_tr_sort(&mut self.fst, _comp);
+        self.fst
+            .set_properties(self.fst.properties() | FstProperties::I_LABEL_SORTED)
     }
 
     /// Sorts the transitions of a wFST based on its output labels.
     pub fn tr_olabel_sort(&mut self) {
         let _comp = OLabelCompare {};
-        rs_tr_sort(&mut self.fst, _comp)
+        rs_tr_sort(&mut self.fst, _comp);
+        self.fst
+            .set_properties(self.fst.properties() | FstProperties::O_LABEL_SORTED)
+        // self.fst.set_properties_with_mask(self.fst.properties(), FstProperties::O_LABEL_SORTED)
     }
 
     /// Returns the shortest path through the wFST.
-    pub fn shortest_path(&self) -> PyResult<Vec<String>> {
+    pub fn shortest_path(&self) -> PyResult<HashSet<String>> {
         let mut shortest = WeightedFst {
             fst: shortest_path(&self.fst)
                 .unwrap_or_else(|e| panic!("Cannot convert wFST to shortest path: {}", e)),
