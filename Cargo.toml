@@ -27,3 +27,6 @@ version = "1.0.47"
 
 [dependencies.nom]
 version = "7.1.0"
+
+[dependencies.rand]
+version = "0.8.4"
