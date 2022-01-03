@@ -3,9 +3,7 @@ use rustfst::algorithms::determinize::{
     determinize_with_config, DeterminizeConfig, DeterminizeType,
 };
 use rustfst::algorithms::tr_sort as rs_tr_sort;
-use rustfst::algorithms::{
-    closure, compose, concat, invert, project, rm_epsilon, union, ProjectType,
-};
+use rustfst::algorithms::{closure, compose, concat, invert, project, union, ProjectType, rm_epsilon};
 use rustfst::algorithms::{minimize_with_config, MinimizeConfig};
 use rustfst::fst_impls::VectorFst;
 use rustfst::fst_properties::FstProperties;
@@ -688,12 +686,12 @@ impl WeightedFst {
         let oth_label = symt
             .get_label("<oth>")
             .unwrap_or_else(|| panic!("SymbolTable does not include '<oth>'"));
-        let normal: Vec<_> = symt
-            .iter()
-            .filter(|(_, s)| !special.contains(&s.to_string()))
-            .map(|(x, _)| x)
-            .collect();
-        let normal_set: HashSet<Label> = normal.into_iter().collect();
+        let normal_set: HashSet<Label> = symt
+                .iter()
+                .filter(|(_, s)| !special.contains(&s.to_string()))
+                .map(|(x, _)| x)
+                .into_iter()
+                .collect();
         for s in fst.states_iter() {
             let trs: Vec<Tr<TropicalWeight>> = fst.pop_trs(s).unwrap_or_default().clone();
             let outbound: HashSet<Label> = trs.iter().map(|tr| tr.ilabel).collect();
