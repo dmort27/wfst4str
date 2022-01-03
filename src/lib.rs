@@ -1,16 +1,22 @@
 use pyo3::prelude::*;
+use rustfst::algorithms::determinize::{
+    determinize_with_config, DeterminizeConfig, DeterminizeType,
+};
 use rustfst::algorithms::tr_sort as rs_tr_sort;
 use rustfst::algorithms::{
-    closure, compose, concat, determinize, invert, minimize, project, union, ProjectType,
+    closure, compose, concat, invert, project, rm_epsilon, union, ProjectType,
 };
+use rustfst::algorithms::{minimize_with_config, MinimizeConfig};
 use rustfst::fst_impls::VectorFst;
 use rustfst::fst_properties::FstProperties;
-use rustfst::fst_traits::{CoreFst, ExpandedFst, MutableFst, SerializableFst};
+use rustfst::fst_traits::{CoreFst, ExpandedFst, SerializableFst};
 use rustfst::prelude::*;
-use rustfst::semirings::{Semiring, TropicalWeight};
+use rustfst::semirings::TropicalWeight;
 use rustfst::utils::{acceptor, transducer};
+use rustfst::KSHORTESTDELTA;
 use std::collections::HashSet;
 // use std::iter::FromIterator;
+use rand::Rng;
 use std::iter::FromIterator;
 use std::path::Path;
 use std::sync::Arc;
@@ -258,6 +264,22 @@ impl WeightedFst {
         Ok(())
     }
 
+    /// Adds a small amount of random noise to the weight of each transition.
+    pub fn add_noise(&mut self) -> PyResult<()> {
+        let mut rng = rand::thread_rng();
+        for s in self.fst.states_iter() {
+            let trs: Vec<Tr<TropicalWeight>> = self.fst.pop_trs(s).unwrap_or_default().clone();
+            for tr in trs.iter() {
+                let noise = TropicalWeight::new(rng.gen::<f32>() * 0.0001);
+                let new_weight = tr.weight.times(noise).unwrap_or(tr.weight);
+                self.fst
+                    .emplace_tr(s, tr.ilabel, tr.olabel, new_weight, tr.nextstate)
+                    .unwrap_or_else(|e| panic!("Cannot create Tr: {}", e));
+            }
+        }
+        Ok(())
+    }
+
     /// Adds a transition to the wFST from `source_state` to `next_state` with
     /// input symbol `isym`, output symbol `osym`, and weight `weight`
     pub fn add_tr(
@@ -335,9 +357,15 @@ impl WeightedFst {
 
     /// Returns a determinized wFST weakly equivalent to `self`.
     pub fn determinize(&self) -> PyResult<WeightedFst> {
-        Ok(WeightedFst {
-            fst: determinize::determinize(&self.fst).expect("Could not determinize wFST"),
-        })
+        let mut fst: VectorFst<TropicalWeight> = determinize_with_config(
+            &self.fst,
+            DeterminizeConfig::new(0.001, DeterminizeType::DeterminizeDisambiguate),
+        )
+        .expect("Could not determinize wFST");
+        fst.set_properties(
+            fst.properties() | FstProperties::I_DETERMINISTIC | FstProperties::O_DETERMINISTIC,
+        );
+        Ok(WeightedFst { fst })
     }
 
     /// Concatenates a wFST (`other`) to the wFST in place.
@@ -361,14 +389,16 @@ impl WeightedFst {
     /// minimizes non-deterministic wFSTs if they use an idempotent semiring.
     pub fn minimize(&self) -> PyResult<WeightedFst> {
         let mut fst = self.fst.clone();
-        minimize(&mut fst).expect("Cannot minimize wFST!");
+        minimize_with_config(&mut fst, MinimizeConfig::new(KSHORTESTDELTA, true))
+            .expect("Cannot minimize wFST!");
         Ok(WeightedFst { fst })
     }
 
     /// Minimizes a deterministic wFST in place. Also minizes non-deterministic
     /// wFSTs if they use an idempotent semiring.
-    pub fn minize_in_place(&mut self) -> PyResult<()> {
-        minimize(&mut self.fst).expect("Cannot minimize wFST!");
+    pub fn minimize_in_place(&mut self) -> PyResult<()> {
+        minimize_with_config(&mut self.fst, MinimizeConfig::new(KSHORTESTDELTA, true))
+            .expect("Cannot minimize wFST!");
         Ok(())
     }
 
@@ -403,9 +433,23 @@ impl WeightedFst {
         Ok(WeightedFst { fst })
     }
 
-    /// In-placew union of the wFST and another (`other`).
+    /// In-place union of the wFST and another (`other`).
     pub fn union_in_place(&mut self, other: &WeightedFst) {
         union::union(&mut self.fst, &other.fst).expect("Cannot union wFSTs!");
+    }
+
+    /// Returns a wFST with epsilon-transitions (transitions with epsilon as
+    /// both input and output labels) removed.
+    pub fn rm_epsilon(&mut self) -> PyResult<WeightedFst> {
+        let mut fst = self.fst.clone();
+        rm_epsilon::rm_epsilon(&mut fst).expect("Cannot remove epsilons!");
+        Ok(WeightedFst { fst })
+    }
+
+    /// Removes epsilon transitions in place.
+    pub fn rm_epsilon_in_place(&mut self) -> PyResult<()> {
+        rm_epsilon::rm_epsilon(&mut self.fst).expect("Cannot remove epsilons!");
+        Ok(())
     }
 
     /// Converts a string to a linear wFST using the input `SymbolTable` of the wFST.
@@ -653,7 +697,7 @@ impl WeightedFst {
         for s in fst.states_iter() {
             let trs: Vec<Tr<TropicalWeight>> = fst.pop_trs(s).unwrap_or_default().clone();
             let outbound: HashSet<Label> = trs.iter().map(|tr| tr.ilabel).collect();
-            let difference: HashSet<Label> = normal_set.difference(&outbound).map(|&x| x).collect();
+            let difference: HashSet<Label> = normal_set.difference(&outbound).copied().collect();
             for tr in trs.iter() {
                 if tr.ilabel == oth_label {
                     for &lab in &difference {
