@@ -628,6 +628,9 @@ impl WeightedFst {
         Ok(outputs)
     }
 
+    /// Returns the string corresponding to the path through the s ∘ wFST with the
+    /// least weight. This, rather than `strings_for_shortest_paths`, is to be
+    /// used in evaluation.
     pub fn best_output(& mut self, s: &str) -> PyResult<String> {
         let outputs: Vec<(String, f32)> = self.outputs_by_weight(s).unwrap();
         if !outputs.is_empty() {
