@@ -3,7 +3,9 @@ use rustfst::algorithms::determinize::{
     determinize_with_config, DeterminizeConfig, DeterminizeType,
 };
 use rustfst::algorithms::tr_sort as rs_tr_sort;
-use rustfst::algorithms::{closure, compose, concat, invert, project, union, ProjectType, rm_epsilon};
+use rustfst::algorithms::{
+    closure, compose, concat, invert, project, rm_epsilon, union, ProjectType,
+};
 use rustfst::algorithms::{minimize_with_config, MinimizeConfig};
 use rustfst::fst_impls::VectorFst;
 use rustfst::fst_properties::FstProperties;
@@ -357,7 +359,7 @@ impl WeightedFst {
     pub fn determinize(&self) -> PyResult<WeightedFst> {
         let mut fst: VectorFst<TropicalWeight> = determinize_with_config(
             &self.fst,
-            DeterminizeConfig::new(0.001, DeterminizeType::DeterminizeDisambiguate),
+            DeterminizeConfig::new(KSHORTESTDELTA, DeterminizeType::DeterminizeDisambiguate),
         )
         .expect("Could not determinize wFST");
         fst.set_properties(
@@ -561,6 +563,8 @@ impl WeightedFst {
         }
     }
 
+    /// Returns a set of strings corresponding the shortest paths (paths having
+    /// the smallest weight) through the string when composed with the FST.
     pub fn strings_for_shortest_paths(&mut self, s: &str) -> PyResult<HashSet<String>> {
         let mut fst = self
             .to_linear_acceptor(s)
@@ -592,6 +596,46 @@ impl WeightedFst {
                 .collect::<Vec<String>>()
                 .join("")
         })))
+    }
+
+    pub fn outputs_by_weight(&mut self, s: &str) -> PyResult<Vec<(String, f32)>> {
+        let mut lfst = self
+            .to_linear_acceptor(s)
+            .unwrap_or_else(|e| panic!("Cannot linearize \"{}\": {}", s, e));
+        let mut fst2 = lfst.compose(self).expect("Cannot compose wFSTs.");
+        fst2.fst.set_symts_from_fst(&self.fst);
+        let mut outputs: Vec<(String, f32)> = fst2
+            .fst
+            .paths_iter()
+            .map(|p| {
+                (
+                   p.olabels
+                        .iter()
+                        .map(|&l| {
+                            self.fst
+                                .output_symbols()
+                                .unwrap_or_else(|| panic!("Cannot access ouput SymbolTable."))
+                                .get_symbol(l)
+                                .unwrap_or("")
+                                .to_string()
+                        })
+                        .collect::<Vec<String>>()
+                        .join(""),
+                    *p.weight.value(),
+                )
+            }).collect();
+        outputs.sort_unstable_by(|(_s1, w1), ( _s2, w2)| w1.partial_cmp(w2).unwrap());
+        Ok(outputs)
+    }
+
+    pub fn best_output(& mut self, s: &str) -> PyResult<String> {
+        let outputs: Vec<(String, f32)> = self.outputs_by_weight(s).unwrap();
+        if !outputs.is_empty() {
+            let (s, _) = &outputs[0];
+            Ok(s.to_string())
+        } else {
+            Ok("".to_string())
+        }
     }
 
     /// Returns true if the wFST has a cycle. Otherwise, it returns false.
@@ -687,11 +731,11 @@ impl WeightedFst {
             .get_label("<oth>")
             .unwrap_or_else(|| panic!("SymbolTable does not include '<oth>'"));
         let normal_set: HashSet<Label> = symt
-                .iter()
-                .filter(|(_, s)| !special.contains(&s.to_string()))
-                .map(|(x, _)| x)
-                .into_iter()
-                .collect();
+            .iter()
+            .filter(|(_, s)| !special.contains(&s.to_string()))
+            .map(|(x, _)| x)
+            .into_iter()
+            .collect();
         for s in fst.states_iter() {
             let trs: Vec<Tr<TropicalWeight>> = fst.pop_trs(s).unwrap_or_default().clone();
             let outbound: HashSet<Label> = trs.iter().map(|tr| tr.ilabel).collect();
