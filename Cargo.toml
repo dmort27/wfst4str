@@ -1,5 +1,6 @@
 [package]
 name = "wfst4str"
+description = "Python library based on rustfst for manipulatig strings with wFSTs"
 version = "1.0.1"
 edition = "2018"
 readme = "README.md"
