@@ -8,4 +8,4 @@ python = "^3.6"
 homepage = "https://github.com/dmort27/wfst4str"
 repository = "https://github.com/dmort27/wfst4str"
 documentation = "https://docs.rs/rustfst/1.0.1/wfst4str/"
-keywords = ["fst", "wfst", "string", "nlp", "linguistics", "python"]
+keywords = ["fst", "wfst", "nlp", "linguistics", "python"]

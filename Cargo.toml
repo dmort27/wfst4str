@@ -7,7 +7,7 @@ homepage = "https://github.com/dmort27/wfst4str"
 respository = "https://github.com/dmort27/wfst4str"
 documentation = "https://docs.rs/rustfst/1.0.1/wfst4str/"
 license = "MIT"
-keywords = ["fst", "wfst", "string", "nlp", "linguistics", "python"]
+keywords = ["fst", "wfst", "nlp", "linguistics", "python"]
 
 
 [lib]
