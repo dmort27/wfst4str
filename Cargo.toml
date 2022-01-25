@@ -1,7 +1,14 @@
 [package]
 name = "wfst4str"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2018"
+readme = "README.md"
+homepage = "https://github.com/dmort27/wfst4str"
+respository = "https://github.com/dmort27/wfst4str"
+documentation = "https://docs.rs/rustfst/1.0.1/wfst4str/"
+license = "MIT"
+keywords = ["fst", "wfst", "string", "nlp", "linguistics", "python"]
+
 
 [lib]
 name = "wfst4str"
