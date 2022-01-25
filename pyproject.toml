@@ -1,0 +1,11 @@
+[project]
+name = "wfst4str"
+description = "Python library based on rustfst for manipulatig strings with wFSTs"
+authors = [ "David R. Mortensen <dmortens@cs.cmu.edu>"]
+license = "MIT"
+readme = "README.md"
+python = "^3.6"
+homepage = "https://github.com/dmort27/wfst4str"
+repository = "https://github.com/dmort27/wfst4str"
+documentation = "https://docs.rs/rustfst/1.0.1/wfst4str/"
+keywords = ["fst", "wfst", "string", "nlp", "linguistics", "python"]
