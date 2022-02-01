@@ -23,6 +23,19 @@ use std::sync::Arc;
 
 pub mod att_parse;
 
+#[derive(Debug, Clone, Copy)]
+enum LabelColor {
+    White,
+    Gray,
+    Black,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Action {
+    Enter,
+    Exit,
+}
+
 /// Wraps a [`rustfst`] SymbolTable struct as a Python class.
 ///
 /// # Example
@@ -844,7 +857,7 @@ impl WeightedFst {
     // Various
 
     /// Returns true if the wFST has a cycle. Otherwise, it returns false.
-    pub fn is_cyclic(&self) -> PyResult<bool> {
+    pub fn is_cyclic_old(&self) -> PyResult<bool> {
         let fst2 = self.fst.clone();
         let mut stack: Vec<StateId> = Vec::new();
         match fst2.start() {
@@ -865,6 +878,40 @@ impl WeightedFst {
                     stack.push(tr.nextstate);
                     visited[s] = true;
                 }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Returns true if the wFST has a cycle. Otherwise, it returns false.
+    pub fn is_cyclic(&self) -> PyResult<bool> {
+        let fst = self.fst.clone();
+        let mut stack: Vec<(Action, StateId)> = Vec::new();
+        match fst.start() {
+            Some(s) => stack.push((Action::Enter, s)),
+            _ => panic!("wFST lacks a start state. Aborting."),
+        }
+        let mut state = vec![LabelColor::White; self.fst.num_states()];
+        while !stack.is_empty() {
+            match stack.pop() {
+                Some((Action::Exit, v)) => state[v] = LabelColor::Black,
+                Some((Action::Enter, v)) => {
+                    state[v] = LabelColor::Gray;
+                    stack.push((Action::Exit, v));
+                    for tr in fst
+                        .get_trs(v)
+                        .unwrap_or_else(|e| panic!("State {} not present in wFST: {}", v, e))
+                        .iter()
+                    {
+                        let n = tr.nextstate;
+                        match state[n] {
+                            LabelColor::Gray => return Ok(true),
+                            LabelColor::White => stack.push((Action::Enter, n)),
+                            _ => (),
+                        }
+                    }
+                }
+                _ => (),
             }
         }
         Ok(false)
