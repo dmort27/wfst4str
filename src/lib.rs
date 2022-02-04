@@ -468,6 +468,9 @@ impl WeightedFst {
         })))
     }
 
+    /// Returns a list of (string, weight) pairs corresponding to the possible
+    /// paths obtained by composing an FSA accepting only `s` with the wFST.
+    /// Pairs are ordered by weight.
     pub fn outputs_by_weight(&mut self, s: &str) -> PyResult<Vec<(String, f32)>> {
         let mut lfst = self
             .to_linear_acceptor(s)
