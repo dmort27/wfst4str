@@ -1,4 +1,5 @@
 use pyo3::prelude::*;
+use rand::Rng;
 use rustfst::algorithms::determinize::{
     determinize_with_config, DeterminizeConfig, DeterminizeType,
 };
@@ -15,8 +16,6 @@ use rustfst::semirings::TropicalWeight;
 use rustfst::utils::{acceptor, transducer};
 use rustfst::KSHORTESTDELTA;
 use std::collections::HashSet;
-// use std::iter::FromIterator;
-use rand::Rng;
 use std::iter::FromIterator;
 use std::path::Path;
 use std::sync::Arc;
@@ -920,6 +919,7 @@ impl WeightedFst {
         Ok(false)
     }
 
+    /// Given a string, returns a list of labels.
     fn isyms_to_labs(&self, s: &str) -> Vec<Label> {
         let symt = self
             .fst
