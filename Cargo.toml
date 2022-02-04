@@ -1,12 +1,12 @@
 [package]
 name = "wfst4str"
 description = "Python library based on rustfst for manipulatig strings with wFSTs"
-version = "1.0.3"
+version = "1.0.4"
 edition = "2018"
 readme = "README.md"
 homepage = "https://github.com/dmort27/wfst4str"
 respository = "https://github.com/dmort27/wfst4str"
-documentation = "https://docs.rs/wfst4str/1.0.3/wfst4str/"
+documentation = "https://docs.rs/wfst4str/1.0.4/wfst4str/"
 license = "MIT"
 keywords = ["fst", "wfst", "nlp", "linguistics", "python"]
 
